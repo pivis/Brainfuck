@@ -36,11 +36,25 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
                       char_('+')    [ ( [og]()->void { og->HLAddData(1); } ) ]
                       |
                       char_('-')    [ ( [og]()->void { og->HLAddData(-1); } ) ]
+                      |
+                      char_('.')    [ ( [og]()->void { og->HLOutputData(); } ) ]
+                      |
+                      char_(',')    [ ( [og]()->void { og->HLReadToData(); } ) ]
+                      |
+                      datacycle
                       ;
+        datacycle = char_('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
+                    >>
+                    *instruction
+                    >>
+                    char_(']')      [ ( [og]()->void { og->HLEndWhile(); } ) ]
+                    ;
     }
 
     qi::rule<Iterator, ascii::space_type> program;
     qi::rule<Iterator, ascii::space_type> instruction;
+    qi::rule<Iterator, ascii::space_type> datacycle;
+    
 };
 
 template<class OutputWriter>
