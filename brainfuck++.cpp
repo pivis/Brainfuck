@@ -1,3 +1,6 @@
+//#include <boost/config/warning_disable.hpp>
+#include <boost/spirit/include/qi.hpp>
+
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -7,10 +10,38 @@
 #include <vector>
 #include <memory>
 
-using namespace std;
-
 //#define CELL8BIT
 
+using namespace std;
+namespace qi = boost::spirit::qi;
+namespace ascii = boost::spirit::ascii;
+namespace spirit = boost::spirit;
+
+template <typename Iterator, typename OutputGenerator>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
+{
+    BrainfuckPPGrammar(OutputGenerator* og) : BrainfuckPPGrammar::base_type(program)
+    {
+        using qi::eps;
+        using qi::lit;
+        using qi::_val;
+        using qi::_1;
+        using qi::_r1;
+        using ascii::char_;
+        program = *instruction; // program is 0 or more instructions
+        instruction = char_('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
+                      |
+                      char_('>')    [ ( [og]()->void { og->HLMove(1); } ) ]
+                      |
+                      char_('+')    [ ( [og]()->void { og->HLAddData(1); } ) ]
+                      |
+                      char_('-')    [ ( [og]()->void { og->HLAddData(-1); } ) ]
+                      ;
+    }
+
+    qi::rule<Iterator, ascii::space_type> program;
+    qi::rule<Iterator, ascii::space_type> instruction;
+};
 
 template<class OutputWriter>
 class Compiler
@@ -519,20 +550,33 @@ void Translate(istream& source, CompilerType& c)
 
 int main(int argc, char* argv[])
 {
+  // declare optimizer - this will accumulate low-level instructions and generate final program optimizing low-level instructions
   shared_ptr<BFOptimizer> bfo = make_shared<BFOptimizer>();
+
+  // compiler - takes high level instructions and generates low-level instructions passing them to low level optimizer
   Compiler<BFOptimizer> c(bfo, 3);
 
+  // parsing grammar
+  typedef BrainfuckPPGrammar<spirit::istream_iterator, Compiler<BFOptimizer> > grammar_type;
+  grammar_type grammar(&c);
+
+  // prepare input reading
   shared_ptr<istream> inputptr(&cin, [](istream*) { });
   if (argc > 1)
     inputptr = make_shared<fstream>(argv[1]);
   istream& program = *inputptr;
+  program.unsetf(std::ios::skipws);
 
-  Translate(program, c);
 
-  stringstream raw, optimized;
+  spirit::istream_iterator iter(program), iterend;
+
+  bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space);
+  cout << "Parsing status: " << (r ? "OK" : "FAILED") << endl << "Input consumed " << (iter == iterend ? "fully" : "partially") << endl;
+
+  stringstream optimized;
   bfo->Output(optimized, true);
-  //bfo->Output(raw, false);
   cout << optimized.str() << endl;
-  //cout << raw.str() << endl;
   return 0;
 }
+
+
