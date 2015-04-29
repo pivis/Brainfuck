@@ -17,6 +17,7 @@ namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
 namespace spirit = boost::spirit;
 
+          
 template <typename Iterator, typename OutputGenerator>
 struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
 {
@@ -26,35 +27,50 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
         using qi::lit;
         using qi::_val;
         using qi::_1;
+        using spirit::_a;
         using qi::_r1;
-        using ascii::char_;
         program = *instruction; // program is 0 or more instructions
-        instruction = char_('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
+        instruction = lit('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
                       |
-                      char_('>')    [ ( [og]()->void { og->HLMove(1); } ) ]
+                      lit('>')    [ ( [og]()->void { og->HLMove(1); } ) ]
                       |
-                      char_('+')    [ ( [og]()->void { og->HLAddData(1); } ) ]
+                      lit('+')    [ ( [og]()->void { og->HLAddData(1); } ) ]
                       |
-                      char_('-')    [ ( [og]()->void { og->HLAddData(-1); } ) ]
+                      lit('-')    [ ( [og]()->void { og->HLAddData(-1); } ) ]
                       |
-                      char_('.')    [ ( [og]()->void { og->HLOutputData(); } ) ]
+                      lit('.')    [ ( [og]()->void { og->HLOutputData(); } ) ]
                       |
-                      char_(',')    [ ( [og]()->void { og->HLReadToData(); } ) ]
+                      lit(',')    [ ( [og]()->void { og->HLReadToData(); } ) ]
+                      |
+                      lit('^')    [ ( [og]()->void { og->HLPutZero(); } ) ]
                       |
                       datacycle
+                      |
+                      (qi::int_ >> lit('<')) [ ( [og](int v)->void { og->HLAddVarData(v); } ) ]
+                      |
+                      (qi::int_ >> lit('>')) [ ( [og](int v)->void { og->HLAddDataVar(v); } ) ]
+                      |
+                      (qi::int_ >> lit('+')) [ ( [og](int v)->void { og->HLAddVar(v); } ) ]
+                      |
+                      (qi::int_ >> lit('-')) [ ( [og](int v)->void { og->HLAddVar(v, -1); } ) ]
+                      |
+                      (qi::int_ >> lit('^')) [ ( [og](int v)->void { og->HLPutZero(v); } ) ]
+                      |
+                      (qi::int_ >> lit(',')) [ ( [og](int v)->void { og->HLReadToVar(v); } ) ]
+                      |
+                      (qi::int_ >> lit('.')) [ ( [og](int v)->void { og->HLOutputVar(v); } ) ]
                       ;
-        datacycle = char_('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
+        datacycle = lit('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
                     >>
                     *instruction
                     >>
-                    char_(']')      [ ( [og]()->void { og->HLEndWhile(); } ) ]
+                    lit(']')      [ ( [og]()->void { og->HLEndWhile(); } ) ]
                     ;
     }
 
     qi::rule<Iterator, ascii::space_type> program;
     qi::rule<Iterator, ascii::space_type> instruction;
     qi::rule<Iterator, ascii::space_type> datacycle;
-    
 };
 
 template<class OutputWriter>
