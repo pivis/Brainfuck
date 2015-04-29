@@ -10,9 +10,9 @@ namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
 
 template <typename Iterator>
-struct BrainfuckPPGrammar : qi::grammar<Iterator, void(ostream*), ascii::space_type>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
 {
-    BrainfuckPPGrammar() : BrainfuckPPGrammar::base_type(program)
+    BrainfuckPPGrammar(ostream* os) : BrainfuckPPGrammar::base_type(program)
     {
         using qi::eps;
         using qi::lit;
@@ -20,32 +20,21 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, void(ostream*), ascii::space_t
         using qi::_1;
         using qi::_r1;
         using ascii::char_;
-
-        program = eps         //  [_r1 << "Start parsing"]
+        program = eps           [ ([os]()->void {(*os) << "Start parsing" << endl; }) ]
                   >>
-                  char_('B')  //  [_r1 << "Symbol B found"]
+                  char_('B')    [ ([os]()->void {(*os) << "Found B" << endl; }) ]
                   >>
-                  char_('C')  //  [_r1 << "Symbol B found"]
+                  char_('C')    [ ([os]()->void {(*os) << "Found C" << endl; }) ]
         ;
-/*
-        start = eps             [_val = 0] >>
-            (
-                +lit('M')       [_val += 1000]
-                ||  hundreds    [_val += _1]
-                ||  tens        [_val += _1]
-                ||  ones        [_val += _1]
-            )
-        ;
-*/
     }
 
-    qi::rule<Iterator, void(ostream*), ascii::space_type> program;
+    qi::rule<Iterator, ascii::space_type> program;
 };
 
 int main()
 {
     typedef BrainfuckPPGrammar<std::string::const_iterator> grammar;
-    grammar g; // Our grammar
+    grammar g(&cout); // Our grammar
 
     vector<string> samples;
     samples.push_back("B C");
@@ -58,7 +47,7 @@ int main()
       string::const_iterator iter = storage.begin();
       string::const_iterator end = storage.end();
 
-      bool r = qi::phrase_parse(iter, end, g(&cout), ascii::space);
+      bool r = qi::phrase_parse(iter, end, g, ascii::space);
       cout << "String '" << storage << "': " << r << " " << (iter == end) << endl;
     }
     return 0;
