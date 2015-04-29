@@ -10,7 +10,7 @@ namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
 
 template <typename Iterator>
-struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, void(ostream*), ascii::space_type>
 {
     BrainfuckPPGrammar() : BrainfuckPPGrammar::base_type(program)
     {
@@ -39,7 +39,7 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
 */
     }
 
-    qi::rule<Iterator, ascii::space_type> program;
+    qi::rule<Iterator, void(ostream*), ascii::space_type> program;
 };
 
 int main()
@@ -58,7 +58,7 @@ int main()
       string::const_iterator iter = storage.begin();
       string::const_iterator end = storage.end();
 
-      bool r = qi::phrase_parse(iter, end, g, ascii::space);
+      bool r = qi::phrase_parse(iter, end, g(&cout), ascii::space);
       cout << "String '" << storage << "': " << r << " " << (iter == end) << endl;
     }
     return 0;
