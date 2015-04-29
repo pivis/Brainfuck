@@ -10,7 +10,7 @@ namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
 
 template <typename Iterator>
-struct BrainfuckPPGrammar : qi::grammar<Iterator>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
 {
     BrainfuckPPGrammar() : BrainfuckPPGrammar::base_type(program)
     {
@@ -24,6 +24,8 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator>
         program = eps         //  [_r1 << "Start parsing"]
                   >>
                   char_('B')  //  [_r1 << "Symbol B found"]
+                  >>
+                  char_('C')  //  [_r1 << "Symbol B found"]
         ;
 /*
         start = eps             [_val = 0] >>
@@ -37,7 +39,7 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator>
 */
     }
 
-    qi::rule<Iterator> program;
+    qi::rule<Iterator, ascii::space_type> program;
 };
 
 int main()
@@ -46,17 +48,17 @@ int main()
     grammar g; // Our grammar
 
     vector<string> samples;
+    samples.push_back("B C");
+    samples.push_back("BC");
     samples.push_back("B");
-    samples.push_back("BX");
-    samples.push_back("B X");
-    samples.push_back("B ");
+    samples.push_back("B C ");
     samples.push_back("E");
     for (string& storage : samples)
     {
       string::const_iterator iter = storage.begin();
       string::const_iterator end = storage.end();
 
-      bool r = qi::parse(iter, end, g);
+      bool r = qi::phrase_parse(iter, end, g, ascii::space);
       cout << "String '" << storage << "': " << r << " " << (iter == end) << endl;
     }
     return 0;
