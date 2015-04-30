@@ -1,5 +1,6 @@
 //#include <boost/config/warning_disable.hpp>
 #include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix.hpp>
 
 #include <iostream>
 #include <sstream>
@@ -26,11 +27,10 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
         using qi::eps;
         using qi::lit;
         using qi::_val;
-        using qi::_1;
-        using spirit::_a;
-        using qi::_r1;
-        program = *instruction; // program is 0 or more instructions
-        instruction = lit('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
+        using namespace qi::labels;
+
+        program %= *instruction; // program is 0 or more instructions
+        instruction %=lit('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
                       |
                       lit('>')    [ ( [og]()->void { og->HLMove(1); } ) ]
                       |
@@ -59,18 +59,36 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
                       (qi::int_ >> lit(',')) [ ( [og](int v)->void { og->HLReadToVar(v); } ) ]
                       |
                       (qi::int_ >> lit('.')) [ ( [og](int v)->void { og->HLOutputVar(v); } ) ]
+                      |
+                      varcycle
+                      |
+                      varif
                       ;
-        datacycle = lit('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
+        datacycle %= lit('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
                     >>
                     *instruction
                     >>
-                    lit(']')      [ ( [og]()->void { og->HLEndWhile(); } ) ]
+                    lit(']')  [ ( [og]()->void { og->HLEndWhile(); } ) ]
+                    ;
+        varcycle %= (qi::int_ >> lit('[')) [ ( [og](int v)->void { og->HLWhileNotZero(v); } ) ]
+                    >>
+                    *instruction
+                    >>
+                    lit(']') [ ( [og]()->void { og->HLEndWhile(); } ) ]
+                    ;
+        varif    %= (qi::int_ >> lit('{')) [ ( [og](int v)->void { og->HLIfNotZero(v); } ) ]
+                    >>
+                    *instruction
+                    >>
+                    lit('}') [ ( [og]()->void { og->HLEndIfNotZero(); } ) ]
                     ;
     }
 
     qi::rule<Iterator, ascii::space_type> program;
     qi::rule<Iterator, ascii::space_type> instruction;
     qi::rule<Iterator, ascii::space_type> datacycle;
+    qi::rule<Iterator, ascii::space_type> varcycle;
+    qi::rule<Iterator, ascii::space_type> varif;
 };
 
 template<class OutputWriter>
@@ -80,6 +98,7 @@ private:
   int _lines; // number of parallel lines (line 0 for data, others for control).
   shared_ptr<OutputWriter> _output;
   bool _at_control;
+  vector<int> _blocks;
 public:
   Compiler(shared_ptr<OutputWriter> output, int lines)
     :_output(move(output)), _lines(lines), _at_control(false)
@@ -87,8 +106,14 @@ public:
     InitializeControl();
   }
 
+  void operator << (int x)
+  {
+    std::cout << "hh " << x << std::endl;
+  }
+
   void HLWhileNotZero(int v = -1)
   {
+    _blocks.push_back(v);
     if (v >= 0)
       GoToVar(v);
     else
@@ -110,8 +135,10 @@ public:
   }
 
 
-  void HLEndWhile(int v = -1)
+  void HLEndWhile()
   {
+    int v = _blocks.back();
+    _blocks.pop_back();
     if (v >= 0)
       GoToVar(v);
     else
@@ -123,13 +150,16 @@ public:
 
   void HLIfNotZero(int argument)
   {
+    _blocks.push_back(argument);
     GoToVar(argument);
     WhileNotZero();
     ReturnFromVar(argument);
   }
 
-  void HLEndIfNotZero(int argument)
+  void HLEndIfNotZero()
   {
+    int argument = _blocks.back();
+    _blocks.pop_back();
     GoToVar(argument, true);
     EndWhile();
     ReturnFromVar(argument); // if the argument was not zero we have returned from space instead
@@ -536,8 +566,8 @@ void Translate(istream& source, CompilerType& c)
         case ',': c.HLReadToData(); break;
         case '.': c.HLOutputData(); break;
         case '[': c.HLWhileNotZero(); openCycles.push_back(-1); break;
-        case ']': c.HLEndWhile(openCycles.back()); openCycles.pop_back(); break;
-        case '}': c.HLEndIfNotZero(openCycles.back()); openCycles.pop_back(); break;
+        case ']': c.HLEndWhile(); openCycles.pop_back(); break;
+        case '}': c.HLEndIfNotZero(); openCycles.pop_back(); break;
         case '0':
         case '1':
         case '2':
