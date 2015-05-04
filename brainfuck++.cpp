@@ -1,6 +1,8 @@
 //#include <boost/config/warning_disable.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
+#include <boost/optional/optional_io.hpp>
+//#include <boost/variant.hpp>
 
 #include <iostream>
 #include <sstream>
@@ -18,78 +20,126 @@ namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
 namespace spirit = boost::spirit;
 
-          
-template <typename Iterator, typename OutputGenerator>
-struct BrainfuckPPGrammar : qi::grammar<Iterator, ascii::space_type>
+
+
+struct block_instruction;
+
+typedef int instruction_var_arg_type;
+const instruction_var_arg_type var_name_for_data = -1;
+
+struct simple_instruction_char
 {
-    BrainfuckPPGrammar(OutputGenerator* og) : BrainfuckPPGrammar::base_type(program)
+  boost::optional<instruction_var_arg_type> argument;
+  char ichar;
+  boost::optional<int> amount;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    ::simple_instruction_char,
+    argument,
+    ichar,
+    amount)
+
+struct simple_instruction_assign
+{
+  bool zero_first;
+  instruction_var_arg_type argument1, argument2;
+};
+
+
+typedef boost::variant<
+    simple_instruction_char
+  , simple_instruction_assign
+  , boost::recursive_wrapper<block_instruction>
+> instruction;
+
+struct block_instruction
+{
+  boost::optional<instruction_var_arg_type> argument;
+  char block_type;
+  vector<instruction> inner;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    ::block_instruction,
+    argument,
+    block_type,
+    inner)
+
+
+template <class ParsedInstructionProcessor>
+class instruction_visitor
+    : public boost::static_visitor<>
+{
+public:
+    instruction_visitor(ParsedInstructionProcessor& o) : _o(o), indent(0) {};
+    void pindent()
+    {
+      for (int i = 0; i < indent; i++) _o << " ";
+    }
+
+    void operator()(simple_instruction_char& sic)
+    {
+      pindent();
+      _o << "visiting simple_instruction_char " << sic.argument << " " << sic.ichar << " " << sic.amount << endl;
+    }
+
+    void operator()(simple_instruction_assign& sia)
+    {
+      pindent();
+      _o << "visiting simple_instruction_assign" << endl;
+    }
+
+    void operator()(block_instruction& bi)
+    {
+      pindent();
+      _o << "visiting block_instruction " << bi.argument << " " <<  bi.block_type << endl;
+      indent++;
+      for (auto it = bi.inner.begin(); it!=bi.inner.end(); ++it)
+        boost::apply_visitor(*this, *it);
+      indent--;
+      pindent();
+      _o << "end visiting " << bi.block_type << endl;
+    }
+
+private:
+    int indent;
+    ParsedInstructionProcessor& _o;
+};
+
+
+template <typename Iterator>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, vector<instruction>(), ascii::space_type>
+{
+    BrainfuckPPGrammar() : BrainfuckPPGrammar::base_type(program_p)
     {
         using qi::eps;
         using qi::lit;
         using qi::_val;
         using namespace qi::labels;
 
-        program %= *instruction; // program is 0 or more instructions
-        instruction %=lit('<')    [ ( [og]()->void { og->HLMove(-1); } ) ]
-                      |
-                      lit('>')    [ ( [og]()->void { og->HLMove(1); } ) ]
-                      |
-                      lit('+')    [ ( [og]()->void { og->HLAddData(1); } ) ]
-                      |
-                      lit('-')    [ ( [og]()->void { og->HLAddData(-1); } ) ]
-                      |
-                      lit('.')    [ ( [og]()->void { og->HLOutputData(); } ) ]
-                      |
-                      lit(',')    [ ( [og]()->void { og->HLReadToData(); } ) ]
-                      |
-                      lit('^')    [ ( [og]()->void { og->HLPutZero(); } ) ]
-                      |
-                      datacycle
-                      |
-                      (qi::int_ >> lit('<')) [ ( [og](int v)->void { og->HLAddVarData(v); } ) ]
-                      |
-                      (qi::int_ >> lit('>')) [ ( [og](int v)->void { og->HLAddDataVar(v); } ) ]
-                      |
-                      (qi::int_ >> lit('+')) [ ( [og](int v)->void { og->HLAddVar(v); } ) ]
-                      |
-                      (qi::int_ >> lit('-')) [ ( [og](int v)->void { og->HLAddVar(v, -1); } ) ]
-                      |
-                      (qi::int_ >> lit('^')) [ ( [og](int v)->void { og->HLPutZero(v); } ) ]
-                      |
-                      (qi::int_ >> lit(',')) [ ( [og](int v)->void { og->HLReadToVar(v); } ) ]
-                      |
-                      (qi::int_ >> lit('.')) [ ( [og](int v)->void { og->HLOutputVar(v); } ) ]
-                      |
-                      varcycle
-                      |
-                      varif
-                      ;
-        datacycle %= lit('[')      [ ( [og]()->void { og->HLWhileNotZero(); } ) ]
-                    >>
-                    *instruction
-                    >>
-                    lit(']')  [ ( [og]()->void { og->HLEndWhile(); } ) ]
-                    ;
-        varcycle %= (qi::int_ >> lit('[')) [ ( [og](int v)->void { og->HLWhileNotZero(v); } ) ]
-                    >>
-                    *instruction
-                    >>
-                    lit(']') [ ( [og]()->void { og->HLEndWhile(); } ) ]
-                    ;
-        varif    %= (qi::int_ >> lit('{')) [ ( [og](int v)->void { og->HLIfNotZero(v); } ) ]
-                    >>
-                    *instruction
-                    >>
-                    lit('}') [ ( [og]()->void { og->HLEndIfNotZero(); } ) ]
-                    ;
+        program_p %= *instruction_p;
+        repeat_clause_p %= lit('(') >> qi::int_ >> lit(')');
+        var_name_p %= qi::uint_;
+        instruction_p %= simple_instruction_char_p | block_instruction_p;
+        simple_instruction_char_p %= -var_name_p >> qi::char_("+-<>^,.") >> -repeat_clause_p;
+        block_instruction_p %= 
+          (-var_name_p >> qi::char_('[') >> *instruction_p >> qi::lit(']'))
+          |
+          (-var_name_p >> qi::char_('{') >> *instruction_p >> qi::lit('}'))
+          ;
     }
 
-    qi::rule<Iterator, ascii::space_type> program;
-    qi::rule<Iterator, ascii::space_type> instruction;
-    qi::rule<Iterator, ascii::space_type> datacycle;
-    qi::rule<Iterator, ascii::space_type> varcycle;
-    qi::rule<Iterator, ascii::space_type> varif;
+    qi::rule<Iterator, vector<instruction>(), ascii::space_type> program_p;
+    qi::rule<Iterator, int(), ascii::space_type> repeat_clause_p;
+    qi::rule<Iterator, instruction_var_arg_type(), ascii::space_type> var_name_p;
+    qi::rule<Iterator, instruction(), ascii::space_type> instruction_p;
+    qi::rule<Iterator, simple_instruction_char(), ascii::space_type> simple_instruction_char_p;
+    qi::rule<Iterator, block_instruction(), ascii::space_type> block_instruction_p;
+
+
 };
+
 
 template<class OutputWriter>
 class Compiler
@@ -617,8 +667,8 @@ int main(int argc, char* argv[])
   Compiler<BFOptimizer> c(bfo, 3);
 
   // parsing grammar
-  typedef BrainfuckPPGrammar<spirit::istream_iterator, Compiler<BFOptimizer> > grammar_type;
-  grammar_type grammar(&c);
+  typedef BrainfuckPPGrammar<spirit::istream_iterator> grammar_type;
+  grammar_type grammar;
 
   // prepare input reading
   shared_ptr<istream> inputptr(&cin, [](istream*) { });
@@ -629,8 +679,15 @@ int main(int argc, char* argv[])
 
 
   spirit::istream_iterator iter(program), iterend;
+  
+  typedef vector<instruction> result_attribute_type;
+  result_attribute_type parsed_result;
+  //bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space);
+  bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space, parsed_result);
+  instruction_visitor<ostream> vis(cout);
+  for (int i = 0; i < parsed_result.size(); i++)
+    boost::apply_visitor(vis, parsed_result[i]);
 
-  bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space);
   cout << "Parsing status: " << (r ? "OK" : "FAILED") << endl << "Input consumed " << (iter == iterend ? "fully" : "partially") << endl;
 
   stringstream optimized;
