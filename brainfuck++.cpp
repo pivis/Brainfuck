@@ -67,56 +67,23 @@ BOOST_FUSION_ADAPT_STRUCT(
     inner)
 
 
-template <class ParsedInstructionProcessor>
-class instruction_visitor
-    : public boost::static_visitor<>
+template <typename Iterator>
+struct CommentSpaceSkipper : qi::grammar<Iterator>
 {
-public:
-    instruction_visitor(ParsedInstructionProcessor& o) : _o(o), indent(0) {};
-    void pindent()
-    {
-      for (int i = 0; i < indent; i++) _o << " ";
-    }
+  CommentSpaceSkipper() : CommentSpaceSkipper::base_type(to_skip)
+  {
+    to_skip = ascii::space | (qi::lit("//") >> *(!(qi::eol | qi::eoi) >> qi::char_) >> (qi::eol | qi::eoi));
+  }
 
-    void operator()(simple_instruction_char& sic)
-    {
-      pindent();
-      _o << "visiting simple_instruction_char " << sic.argument << " " << sic.ichar << " " << sic.amount << endl;
-    }
-
-    void operator()(simple_instruction_assign& sia)
-    {
-      pindent();
-      _o << "visiting simple_instruction_assign" << endl;
-    }
-
-    void operator()(block_instruction& bi)
-    {
-      pindent();
-      _o << "visiting block_instruction " << bi.argument << " " <<  bi.block_type << endl;
-      indent++;
-      for (auto it = bi.inner.begin(); it!=bi.inner.end(); ++it)
-        boost::apply_visitor(*this, *it);
-      indent--;
-      pindent();
-      _o << "end visiting " << bi.block_type << endl;
-    }
-
-private:
-    int indent;
-    ParsedInstructionProcessor& _o;
+  qi::rule<Iterator> to_skip;
 };
 
-
-template <typename Iterator>
-struct BrainfuckPPGrammar : qi::grammar<Iterator, vector<instruction>(), ascii::space_type>
+template <typename Iterator, typename SpaceType>
+struct BrainfuckPPGrammar : qi::grammar<Iterator, vector<instruction>(), SpaceType>
 {
     BrainfuckPPGrammar() : BrainfuckPPGrammar::base_type(program_p)
     {
-        using qi::eps;
         using qi::lit;
-        using qi::_val;
-        using namespace qi::labels;
 
         program_p %= *instruction_p;
         repeat_clause_p %= lit('(') >> qi::int_ >> lit(')');
@@ -130,19 +97,19 @@ struct BrainfuckPPGrammar : qi::grammar<Iterator, vector<instruction>(), ascii::
           ;
     }
 
-    qi::rule<Iterator, vector<instruction>(), ascii::space_type> program_p;
-    qi::rule<Iterator, int(), ascii::space_type> repeat_clause_p;
-    qi::rule<Iterator, instruction_var_arg_type(), ascii::space_type> var_name_p;
-    qi::rule<Iterator, instruction(), ascii::space_type> instruction_p;
-    qi::rule<Iterator, simple_instruction_char(), ascii::space_type> simple_instruction_char_p;
-    qi::rule<Iterator, block_instruction(), ascii::space_type> block_instruction_p;
+    qi::rule<Iterator, vector<instruction>(), SpaceType> program_p;
+    qi::rule<Iterator, int(), SpaceType> repeat_clause_p;
+    qi::rule<Iterator, instruction_var_arg_type(), SpaceType> var_name_p;
+    qi::rule<Iterator, instruction(), SpaceType> instruction_p;
+    qi::rule<Iterator, simple_instruction_char(), SpaceType> simple_instruction_char_p;
+    qi::rule<Iterator, block_instruction(), SpaceType> block_instruction_p;
 
 
 };
 
 
 template<class OutputWriter>
-class Compiler
+class Compiler : public boost::static_visitor<>
 {
 private:
   int _lines; // number of parallel lines (line 0 for data, others for control).
@@ -150,15 +117,99 @@ private:
   bool _at_control;
   vector<int> _blocks;
 public:
+
+  void operator()(simple_instruction_char& sic)
+  {
+    int amount = 1;
+    if (sic.amount)
+      amount = *sic.amount;
+
+    switch (sic.ichar)
+    {
+      case '^':
+        if (!sic.argument || *sic.argument == var_name_for_data)
+          HLPutZero();
+        else
+          HLPutZero(*sic.argument);
+        break;
+      case '.':
+        for (int i = 0; i < amount; i++)
+        {
+          if (!sic.argument || *sic.argument == var_name_for_data)
+            HLOutputData();
+          else
+            HLOutputVar(*sic.argument);
+        }
+        break;      
+      case ',':
+        for (int i = 0; i < amount; i++)
+        {
+          if (!sic.argument || *sic.argument == var_name_for_data)
+            HLReadToData();
+          else
+            HLReadToVar(*sic.argument);
+        }
+        break;
+      case '-':
+        amount = -amount;
+      case '+':
+        if (!sic.argument || *sic.argument == var_name_for_data)
+          HLAddData(amount);
+        else
+          HLAddVar(*sic.argument, amount);
+        break;
+      case '<':
+        if (!sic.argument || *sic.argument == var_name_for_data)
+          HLMove(-amount);
+        else
+        {
+          for(int i = 0; i < amount; i++) HLAddVarData(*sic.argument);
+        }
+        break;
+      case '>':
+        if (!sic.argument || *sic.argument == var_name_for_data)
+          HLMove(amount);
+        else
+        {
+          for(int i = 0; i < amount; i++) HLAddDataVar(*sic.argument);
+        }
+        break;
+    }
+  }
+
+  void operator()(simple_instruction_assign& sia)
+  {
+    throw "Error simple_instruction_assign is not implemented";
+  }
+
+  void operator()(block_instruction& bi)
+  {
+    if (bi.block_type == '[')
+    {
+      if (!bi.argument || *bi.argument == var_name_for_data)
+        HLWhileNotZero();
+      else
+        HLWhileNotZero(*bi.argument);
+    }
+    else
+    {
+      // should be '{' and also should be bi.argument && *bi.argument != var_name_for_data
+      HLIfNotZero(*bi.argument);
+    }
+
+    for (auto it = bi.inner.begin(); it != bi.inner.end(); ++it)
+      boost::apply_visitor(*this, *it);
+
+    if (bi.block_type == '[')
+      HLEndWhile();
+    else
+      HLEndIfNotZero();
+  }
+
   Compiler(shared_ptr<OutputWriter> output, int lines)
     :_output(move(output)), _lines(lines), _at_control(false)
   {
     InitializeControl();
-  }
-
-  void operator << (int x)
-  {
-    std::cout << "hh " << x << std::endl;
   }
 
   void HLWhileNotZero(int v = -1)
@@ -667,7 +718,7 @@ int main(int argc, char* argv[])
   Compiler<BFOptimizer> c(bfo, 3);
 
   // parsing grammar
-  typedef BrainfuckPPGrammar<spirit::istream_iterator> grammar_type;
+  typedef BrainfuckPPGrammar<spirit::istream_iterator, CommentSpaceSkipper<spirit::istream_iterator> > grammar_type;
   grammar_type grammar;
 
   // prepare input reading
@@ -682,11 +733,10 @@ int main(int argc, char* argv[])
   
   typedef vector<instruction> result_attribute_type;
   result_attribute_type parsed_result;
-  //bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space);
-  bool r = qi::phrase_parse(iter, iterend, grammar, ascii::space, parsed_result);
-  instruction_visitor<ostream> vis(cout);
+  bool r = qi::phrase_parse(iter, iterend, grammar, CommentSpaceSkipper<spirit::istream_iterator>(), parsed_result);
+
   for (int i = 0; i < parsed_result.size(); i++)
-    boost::apply_visitor(vis, parsed_result[i]);
+    boost::apply_visitor(c, parsed_result[i]);
 
   cout << "Parsing status: " << (r ? "OK" : "FAILED") << endl << "Input consumed " << (iter == iterend ? "fully" : "partially") << endl;
 
